@@ -1,0 +1,2 @@
+- [CRC（循环冗余校验）在线计算](http://www.ip33.com/crc.html)
+- [crccalc.com](https://crccalc.com/)
