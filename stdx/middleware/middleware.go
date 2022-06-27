@@ -31,10 +31,9 @@ func (c *chain) Handle(next http.Handler) http.Handler {
 
 func (c *chain) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 	nextHandler := http.Handler(next)
-	return func(w http.ResponseWriter, r *http.Request) {
-		for i := len(c.mws) - 1; i >= 0; i-- {
-			nextHandler = c.mws[i](nextHandler)
-		}
-		nextHandler.ServeHTTP(w, r)
+	for i := len(c.mws) - 1; i >= 0; i-- {
+		nextHandler = c.mws[i](nextHandler)
 	}
+
+	return nextHandler.ServeHTTP
 }
