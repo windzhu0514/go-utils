@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"git.17usoft.com/UnifiedPlatform/UnifiedPlatform/pkg/middleware"
+	"github.com/windzhu0514/go-utils/stdx/middleware"
 )
 
 type Option func(*options)
