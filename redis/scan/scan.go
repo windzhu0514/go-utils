@@ -94,36 +94,24 @@ func (s *rdbScanner) scan(addr, match string) error {
 		DB:          0,
 	})
 
-	_, err := rdb.Ping(context.TODO()).Result()
+	ctx := context.TODO()
+	_, err := rdb.Ping(ctx).Result()
 	if err != nil {
 		fmt.Println(err)
 		return err
 	}
 
-	//查找匹配的key
-	var cursor uint64 = 0
-	var amount int
-	for {
-		if s.verbose {
-			fmt.Printf("Scan cursor:%d match:%s count:%d\n", cursor, match, 200)
-		}
-		var keys []string
-		keys, cursor, err = rdb.Scan(context.TODO(), cursor, match, 200).Result()
-		if err != nil {
-			fmt.Println("Scan cursor:%d count:200 err:" + err.Error())
-			return err
-		}
+	// 查找匹配的key
+	var amount int64
+	iter := rdb.Scan(ctx, 0, match, 10000).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		amount++
+		fmt.Println(key)
+	}
 
-		if len(keys) > 0 {
-			for _, key := range keys {
-				amount++
-				fmt.Println(key)
-			}
-		}
-
-		if cursor == 0 {
-			break
-		}
+	if err := iter.Err(); err != nil {
+		panic(err)
 	}
 
 	fmt.Printf("%s keys amount:%d\n", addr, amount)

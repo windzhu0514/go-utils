@@ -10,6 +10,7 @@ require (
 	github.com/go-resty/resty/v2 v2.7.0
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/looplab/fsm v0.3.0
+	github.com/netbrain/goautosocket v0.0.0-20150624145746-bef85f0aef40
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/satori/go.uuid v1.2.0
