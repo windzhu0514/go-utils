@@ -3,20 +3,14 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"errors"
 
 	"github.com/windzhu0514/go-utils/crypto/ecb"
 )
 
-// AES Advanced Encryption Standard
-// https://blog.csdn.net/xiaohu50/article/details/51682849
-// ecb、cbc、ofb、cfb
-// AES 对加密 key 的长度要求必须固定为 16、24、32 位，也就是 128、192、256 比特，
-// 所以又有一个 AES-128、AES-192、AES-256 这种叫法，位数越大安全性越高但加密速度越慢。
-// 最关键是对明文长度也有要求，必须是分组长度长度的倍数，AES 加密数据块分组长度必须为
-// 128bit 也就是 16 位，所以这块又涉及到一个填充问题，而这个填充方式可以分为 PKCS7 和 PKCS5 等方式，
-
-// ECB和CBC需要填充
-
+// AESCipher AES Advanced Encryption Standard
+// 支持 ECB、CBC、CFB、CTR、GCM、OFB
+// key 长度 16、24、32 位，即 128、192、256 比特（AES-128、AES-192、AES-256），位数越大安全性越高但加密速度越慢
 type AESCipher struct {
 	Key            []byte // 对称加密Key或者公钥私钥
 	IV             []byte
@@ -59,6 +53,7 @@ func WithNonce(nonce []byte) Option {
 	}
 }
 
+// gcm
 func WithAdditionalData(additionalData []byte) Option {
 	return func(a *AESCipher) {
 		a.AdditionalData = additionalData
@@ -112,8 +107,7 @@ type BlockMode interface {
 // 对每个明文块应用秘钥，缺点在于同样的平文块会被加密成相同的密文块，因此，它不能很好的隐藏数据模式
 var ECB ecbBlockMode
 
-type ecbBlockMode struct {
-}
+type ecbBlockMode struct{}
 
 func (e ecbBlockMode) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
 	mode := ecb.NewECBEncrypter(block)
@@ -141,10 +135,13 @@ func (e ecbBlockMode) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]b
 // 不会影响到其它平文的内容
 var CBC cbc
 
-type cbc struct {
-}
+type cbc struct{}
 
 func (e cbc) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+	if len(c.IV) != block.BlockSize() {
+		return nil, errors.New("IV length must equal block size")
+	}
+
 	mode := cipher.NewCBCEncrypter(block, c.IV)
 	src = c.PaddingMode.Padding(src, block.BlockSize())
 	dst := make([]byte, len(src))
@@ -154,6 +151,10 @@ func (e cbc) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 }
 
 func (e cbc) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+	if len(c.IV) != block.BlockSize() {
+		return nil, errors.New("IV length must equal block size")
+	}
+
 	mode := cipher.NewCBCDecrypter(block, c.IV)
 	dst := make([]byte, len(src))
 	mode.CryptBlocks(dst, src)
@@ -163,10 +164,13 @@ func (e cbc) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 
 var CFB cfb
 
-type cfb struct {
-}
+type cfb struct{}
 
 func (e cfb) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+	if len(c.IV) != block.BlockSize() {
+		return nil, errors.New("IV length must equal block size")
+	}
+
 	mode := cipher.NewCFBEncrypter(block, c.IV)
 	dst := make([]byte, len(src))
 	mode.XORKeyStream(dst, src)
@@ -175,6 +179,10 @@ func (e cfb) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 }
 
 func (e cfb) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+	if len(c.IV) != block.BlockSize() {
+		return nil, errors.New("IV length must equal block size")
+	}
+
 	mode := cipher.NewCFBDecrypter(block, c.IV)
 	dst := make([]byte, len(src))
 	mode.XORKeyStream(dst, src)
@@ -184,10 +192,13 @@ func (e cfb) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 
 var CTR ctr
 
-type ctr struct {
-}
+type ctr struct{}
 
 func (e ctr) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+	if len(c.IV) != block.BlockSize() {
+		return nil, errors.New("IV length must equal block size")
+	}
+
 	mode := cipher.NewCTR(block, c.IV)
 	dst := make([]byte, len(src))
 	mode.XORKeyStream(dst, src)
@@ -196,6 +207,10 @@ func (e ctr) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 }
 
 func (e ctr) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+	if len(c.IV) != block.BlockSize() {
+		return nil, errors.New("IV length must equal block size")
+	}
+
 	mode := cipher.NewCTR(block, c.IV)
 	dst := make([]byte, len(src))
 	mode.XORKeyStream(dst, src)
@@ -206,8 +221,7 @@ func (e ctr) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 // GCM AE，Authenticated Encryption
 var GCM gcm
 
-type gcm struct {
-}
+type gcm struct{}
 
 func (e gcm) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
 	var (
@@ -253,8 +267,7 @@ func (e gcm) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 
 var OFB ofb
 
-type ofb struct {
-}
+type ofb struct{}
 
 func (e ofb) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
 	mode := cipher.NewOFB(block, c.IV)

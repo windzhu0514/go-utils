@@ -11,13 +11,11 @@ import (
 	"github.com/go-kratos/kratos/v2/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	uuid "github.com/satori/go.uuid"
-
-	"git.17usoft.com/GSAirGroup/BookingService/pkg/utils"
+	"github.com/windzhu0514/go-utils/utils"
 )
 
-type CallBack interface {
-	RetryHandler()
-	OnMaxAttempts()
+type CallBackHandler interface {
+	DelayQueueHandler()
 }
 
 // DelayMsg
