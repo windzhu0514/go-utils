@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/windzhu0514/go-utils/stdx/middleware"
+	"github.com/windzhu0514/go-utils/stdx/http/middleware"
 )
 
 type Option func(*options)

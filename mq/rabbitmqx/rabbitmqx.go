@@ -1,15 +1,14 @@
-package rabbitx
+package rabbitmqx
 
 import (
 	"github.com/rabbitmq/amqp091-go"
-	"github.com/streadway/amqp"
 )
 
 type Connection struct {
 	conn *amqp091.Connection
 }
 type Queue struct {
-	channel *amqp.Channel
+	channel *amqp091.Channel
 }
 
 type Message struct{}
@@ -40,4 +39,5 @@ func NewQueue(opts ...QueueOption) (*Queue, error) {
 }
 
 func (q *Queue) Publish(msg *Message) error {
+	return nil
 }

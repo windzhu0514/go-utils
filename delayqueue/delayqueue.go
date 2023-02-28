@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/go-kratos/kratos/v2/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	uuid "github.com/satori/go.uuid"
 	"github.com/windzhu0514/go-utils/utils"
@@ -18,19 +17,6 @@ type CallBackHandler interface {
 	DelayQueueHandler()
 }
 
-// DelayMsg
-// Host 消息发送地址
-// Path 消息发送地址utl path
-// Heads 请求头
-// Body 请求体
-// Content-Type 默认使用 head 里 Content-Type 的值，如果为空，按以下规则设置
-// Struct Map Slice Content-Type 自动使用 "application/json"
-// String Content-Type 自动使用 "text/plain; charset=utf-8"
-// []byte Content-Type 使用 http.DetectContentType 来探测 Content-Type 的值
-// FirstDelayed 首次发送延迟时间
-// Delayed 每次发送的延迟时间
-// Times 当前发送次数
-// TotalTimes 总共发送次数，默认和 Times 相同，0 表示未收到正确的回复时，一直重试
 type Message struct {
 	InitialDelay  time.Duration          `json:"initialDelay"`  // 首次发送延迟时间
 	FixedDelay    time.Duration          `json:"fixedDelay"`    // 非首次发送延迟时间
@@ -50,7 +36,6 @@ type KeyValue struct {
 
 type DelayQueue struct {
 	amqpUrl      string
-	log          *log.Helper
 	concurrent   int // 并发数量
 	exchangeName string
 	queueName    string
@@ -61,6 +46,7 @@ type DelayQueue struct {
 	notifyConnClose chan *amqp.Error
 	notifyChanClose chan *amqp.Error
 	quitChan        chan struct{}
+	backof          BackOffPolicy
 }
 
 const (
@@ -68,10 +54,9 @@ const (
 	reInitDelay    = 2 * time.Second
 )
 
-func New(amqpUrl string, logger log.Logger, exchangeName, queueName string, concurrent int, handler func(msg *Message) error) (*DelayQueue, error) {
+func New(amqpUrl string, exchangeName, queueName string, concurrent int, handler func(msg *Message) error) (*DelayQueue, error) {
 	r := &DelayQueue{
 		amqpUrl:      amqpUrl,
-		log:          log.NewHelper(log.With(logger, "module", "retry")),
 		exchangeName: exchangeName,
 		queueName:    queueName,
 		concurrent:   concurrent,
@@ -85,21 +70,16 @@ func New(amqpUrl string, logger log.Logger, exchangeName, queueName string, conc
 	r.quitChan = make(chan struct{})
 
 	if err := r.connect(); err != nil {
-		r.log.Errorf("connect amqp error: %s", err.Error())
 		return nil, err
 	}
 
 	go r.handleReconnect()
-
-	r.log.Info("retry new success")
 
 	return r, nil
 }
 
 func (r *DelayQueue) Shutdown() {
 	r.quitChan <- struct{}{}
-
-	r.log.Info("shutting down rabbitMQ's connection...")
 }
 
 func (r *DelayQueue) Publish(msg *Message) error {
@@ -107,9 +87,6 @@ func (r *DelayQueue) Publish(msg *Message) error {
 }
 
 func (r *DelayQueue) publish(msg *Message, first bool) error {
-	r.log.Debugw(log.DefaultMessageKey, "publish msg", "jsonContent", utils.JsonMarshalString(msg))
-	defer r.log.Debugw(log.DefaultMessageKey, "publish msg end", "jsonContent", utils.JsonMarshalString(msg))
-
 	msg.CreateAt = time.Now()
 	msg.LastPublishAt = msg.CreateAt
 	msg.TraceID = uuid.NewV4().String()
@@ -144,7 +121,6 @@ func (r *DelayQueue) publish(msg *Message, first bool) error {
 func (r *DelayQueue) connect() (err error) {
 	r.amqpConn, err = amqp.Dial(r.amqpUrl)
 	if err != nil {
-		r.log.Error(err)
 		return err
 	}
 
@@ -165,7 +141,6 @@ func (r *DelayQueue) init() (err error) {
 
 	r.amqpChannel, err = r.amqpConn.Channel()
 	if err != nil {
-		r.log.Error(err)
 		return err
 	}
 
@@ -204,7 +179,6 @@ func (r *DelayQueue) init() (err error) {
 		nil,         // args
 	)
 	if err != nil {
-		r.log.Error(err)
 		return err
 	}
 
@@ -217,11 +191,9 @@ func (r *DelayQueue) handleReconnect() {
 	for {
 		select {
 		case amqpErr := <-r.notifyConnClose:
-			r.log.Errorf("rabbitMQ connection notify: %v", amqpErr)
 			if err := r.connect(); err != nil {
 				select {
 				case <-r.quitChan:
-					r.log.Info("rabbitMQ has been shut down")
 					return
 				case <-time.After(reconnectDelay):
 				}
@@ -229,11 +201,9 @@ func (r *DelayQueue) handleReconnect() {
 			}
 
 		case amqpErr := <-r.notifyChanClose:
-			r.log.Errorf("rabbitMQ channel notify: %v", amqpErr)
 			if err := r.init(); err != nil {
 				select {
 				case <-r.quitChan:
-					r.log.Info("rabbitMQ has been shut down")
 					return
 				case <-time.After(reInitDelay):
 				}
@@ -243,14 +213,12 @@ func (r *DelayQueue) handleReconnect() {
 		case <-r.quitChan:
 			r.amqpConn.Close()
 			r.amqpChannel.Close()
-			r.log.Info("rabbitMQ has been shut down")
 			return
 		}
 	}
 }
 
 func (r *DelayQueue) consume(chMsgs <-chan amqp.Delivery) {
-	r.log.Infof("begin consume mq messages")
 	if r.concurrent == 0 {
 		r.concurrent = 10
 	}
@@ -266,14 +234,11 @@ func (r *DelayQueue) consume(chMsgs <-chan amqp.Delivery) {
 					n := runtime.Stack(buf, false)
 					buf = buf[:n]
 
-					r.log.Errorf("mqConsume panic: %v\n%s", err, buf)
 				}
 			}()
 
-			r.log.Debugf("Received a message: %s", string(d.Body))
 			r.do(d)
 			if err := d.Ack(false); err != nil {
-				r.log.Errorf("consume Ack error: %s", err.Error())
 			}
 
 			<-limit
@@ -284,13 +249,10 @@ func (r *DelayQueue) consume(chMsgs <-chan amqp.Delivery) {
 func (r *DelayQueue) do(msg amqp.Delivery) {
 	var retryMsg Message
 	if err := json.Unmarshal(msg.Body, &retryMsg); err != nil {
-		r.log.Errorw("error", err.Error(), "jsonContent", string(msg.Body))
 		return
 	}
 
 	if err := r.handler(&retryMsg); err != nil {
-		r.log.Debugw("traceId", retryMsg.TraceID, "retryTimes", retryMsg.Times, "retryTotalTimes", retryMsg.TotalTimes,
-			"retryMsg", utils.JsonMarshalString(retryMsg), log.DefaultMessageKey, "重试消息处理失败")
 
 		retryMsg.LastPublishAt = time.Now()
 		retryMsg.Times++
@@ -298,17 +260,10 @@ func (r *DelayQueue) do(msg amqp.Delivery) {
 		if retryMsg.TotalTimes > 0 && retryMsg.Times < retryMsg.TotalTimes {
 			// 重新入队
 			if err := r.publish(&retryMsg, false); err != nil {
-				r.log.Error(err)
 			}
 			return
 		}
 
-		r.log.Debugw("traceId", retryMsg.TraceID, "retryTimes", retryMsg.Times, "retryTotalTimes", retryMsg.TotalTimes,
-			"retryMsg", utils.JsonMarshalString(retryMsg), log.DefaultMessageKey, "总重试次数为0或达到最大重试次数，结束重试")
-
 		return
 	}
-
-	r.log.Debugw("traceId", retryMsg.TraceID, "retryTimes", retryMsg.Times, "retryTotalTimes", retryMsg.TotalTimes,
-		"retryMsg", utils.JsonMarshalString(retryMsg), log.DefaultMessageKey, "重试处理成功，结束重试")
 }

@@ -31,8 +31,8 @@ func main() {
 				},
 			},
 		},
-	}, func(ctx fsm.StateContext) fsm.State {
-		return fsm.State{}
+	}, func(ctx fsm.StateContext) (fsm.State, error) {
+		return fsm.State{}, nil
 	})
 
 	f.SendEvent(fsm.EventContext{})

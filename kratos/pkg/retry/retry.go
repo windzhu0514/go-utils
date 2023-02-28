@@ -8,11 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-resty/resty/v2"
 	"net/http"
 	"net/url"
 	"runtime"
 	"time"
+
+	"github.com/go-resty/resty/v2"
 
 	"github.com/go-kratos/kratos/v2/log"
 	uuid "github.com/satori/go.uuid"
