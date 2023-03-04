@@ -10,6 +10,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	uuid "github.com/satori/go.uuid"
+	"github.com/windzhu0514/go-utils/delayqueue/backoff"
 	"github.com/windzhu0514/go-utils/utils"
 )
 
@@ -18,15 +19,19 @@ type CallBackHandler interface {
 }
 
 type Message struct {
-	InitialDelay  time.Duration          `json:"initialDelay"`  // 首次发送延迟时间
-	FixedDelay    time.Duration          `json:"fixedDelay"`    // 非首次发送延迟时间
-	Times         int                    `json:"times"`         // 当前重试次数
-	TotalTimes    int                    `json:"totalTimes"`    // 总重试次数
-	CreateAt      time.Time              `json:"createAt"`      // 首次发送时间
-	LastPublishAt time.Time              `json:"lastPublishAt"` // 上次发送时间
-	Body          []byte                 `json:"body"`          // 消息载体
-	Metadata      map[string]interface{} `json:"metadata"`      // 附加信息
-	TraceID       string                 `json:"traceID"`       // 每次请求的TraceID
+	Backoff       backoff.BackOffPolicy
+	Times         int       `json:"times"`         // 当前重试次数
+	TotalTimes    int       `json:"totalTimes"`    // 总重试次数
+	CreateAt      time.Time `json:"publishAt"`     // 首次发送时间
+	LastPublishAt time.Time `json:"lastPublishAt"` // 上次发送时间
+	Body          []byte    `json:"body"`          // 消息载体
+	MessageId     string    `json:"messageId"`     // 每次请求的TraceID
+}
+
+type DelayMessage struct {
+	Backoff    backoff.BackOffPolicy
+	TotalTimes int    `json:"totalTimes"` // 总重试次数
+	Body       []byte `json:"body"`       // 消息载体
 }
 
 type KeyValue struct {
@@ -46,7 +51,6 @@ type DelayQueue struct {
 	notifyConnClose chan *amqp.Error
 	notifyChanClose chan *amqp.Error
 	quitChan        chan struct{}
-	backof          BackOffPolicy
 }
 
 const (
