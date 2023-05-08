@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"git.17usoft.com/GSAirGroup/BookingService/pkg/utils"
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/windzhu0514/go-utils/utils"
 )
 
 var r *DelayQueue
@@ -15,7 +15,7 @@ func TestMain(m *testing.M) {
 	url := "amqp://admin:admintc123@10.100.173.206:9073"
 	logger := log.DefaultLogger
 	var err error
-	r, err = New(url, logger, "test.delayed.exchange", "test.delayed.queue", 3, func(msg *Message) error {
+	r, err = New(logger, url, "test.delayed.exchange", "test.delayed.queue", nil, func(msg *Message) error {
 		return nil
 	})
 	if err != nil {
@@ -27,12 +27,9 @@ func TestMain(m *testing.M) {
 
 func TestPush(t *testing.T) {
 	for {
-		msg := &Message{
-			InitialDelay: time.Minute,
-			Delayed:      time.Minute,
-			TotalTimes:   3,
-			Body:         []byte("test"),
-			CreateAt:     time.Now(),
+		msg := &DelayMessage{
+			TotalTimes: 3,
+			Body:       []byte("test"),
 		}
 		fmt.Println(utils.JsonMarshalString(msg))
 		err := r.Publish(msg)

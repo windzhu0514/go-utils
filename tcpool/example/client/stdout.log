@@ -1,0 +1,5 @@
+2023/04/12 14:04:06.652091 GetConn: localhost:9999
+2023/04/12 14:04:06.652191 ConnectStart network: tcp addr:localhost:9999
+2023/04/12 14:04:06.652910 ConnectDone network: tcp addr:localhost:9999 err:<nil>
+2023/04/12 14:04:06.652946 GotConn: {Conn:0xc00011c0d8 Reused:false WasIdle:false IdleTime:0s}
+2023/04/12 14:04:06.652957 PutIdleConn: <nil>

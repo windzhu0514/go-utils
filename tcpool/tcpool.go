@@ -1,6 +1,7 @@
 package tcpool
 
 import (
+	"bufio"
 	"container/list"
 	"errors"
 	"io"
@@ -18,8 +19,17 @@ var (
 	ErrGetConnFailed = errors.New("tcpool: get conn failed,max retry times")
 )
 
+type Option struct {
+	MaxIdleConns      int // default 0
+	MaxConns          int // default 3
+	MaxBadConnRetries int // default 3
+	Trace             *ConnTrace
+}
+
 type pool struct {
-	hostPort     string
+	hostPort string
+	opt      Option
+
 	mu           sync.Mutex // guards following fields
 	idleConn     []*persistConn
 	idleConnWait wantConnQueue // waiting getConns
@@ -27,59 +37,24 @@ type pool struct {
 	closech      chan struct{}
 	closed       bool
 	conns        int
-
-	MaxIdleConns      int // default 0
-	MaxConns          int // default 3
-	MaxBadConnRetries int // default 3
-	Trace             *ConnTrace
 }
 
-type Option func(*pool)
+func New(hostPort string, opt Option) io.WriteCloser {
+	p := &pool{hostPort: hostPort, opt: opt}
 
-func WithMaxIdleConns(n int) Option {
-	return func(p *pool) {
-		p.MaxIdleConns = n
-	}
-}
-
-func WithMaxConns(n int) Option {
-	return func(p *pool) {
-		p.MaxConns = n
-	}
-}
-
-func WithMaxBadConnRetries(n int) Option {
-	return func(p *pool) {
-		p.MaxBadConnRetries = n
-	}
-}
-
-func WithTrace(trace *ConnTrace) Option {
-	return func(p *pool) {
-		p.Trace = trace
-	}
-}
-
-func New(hostPort string, opts ...Option) io.WriteCloser {
-	p := &pool{hostPort: hostPort}
-
-	for _, opt := range opts {
-		opt(p)
+	if p.opt.MaxConns == 0 {
+		p.opt.MaxConns = 3
 	}
 
-	if p.MaxConns == 0 {
-		p.MaxConns = 3
-	}
-
-	if p.MaxBadConnRetries == 0 {
-		p.MaxBadConnRetries = 3
+	if p.opt.MaxBadConnRetries == 0 {
+		p.opt.MaxBadConnRetries = 3
 	}
 
 	return p
 }
 
 func (p *pool) Write(bytes []byte) (int, error) {
-	for i := 0; i < p.MaxBadConnRetries; i++ {
+	for i := 0; i < p.opt.MaxBadConnRetries; i++ {
 		select {
 		case <-p.closech:
 			return 0, errPoolClosed
@@ -91,17 +66,29 @@ func (p *pool) Write(bytes []byte) (int, error) {
 			return 0, err
 		}
 
-		n, err := pc.Write(bytes)
+		n, err := pc.bw.Write(bytes)
 		if err == nil {
 			err = p.tryPutIdleConn(pc)
-			if p.Trace != nil && p.Trace.PutIdleConn != nil {
-				p.Trace.PutIdleConn(err)
+			if p.opt.Trace != nil && p.opt.Trace.PutIdleConn != nil {
+				p.opt.Trace.PutIdleConn(err)
 			}
 
+			err = pc.bw.Flush()
+
 			return n, err
+		} else {
+			log.Println("Write failed:" + err.Error())
+			pc.close(err)
+			p.removeIdleConn(pc)
+			p.conns--
+
+			if p.opt.Trace != nil && p.opt.Trace.PutIdleConn != nil {
+				p.opt.Trace.PutIdleConn(err)
+			}
 		}
 
 		if !pc.shouldRetry(err) {
+			time.Sleep(time.Millisecond * 500)
 			return 0, err
 		}
 	}
@@ -126,8 +113,8 @@ func (p *pool) Close() error {
 }
 
 func (p *pool) getConn() (pc *persistConn, err error) {
-	if p.Trace != nil && p.Trace.GetConn != nil {
-		p.Trace.GetConn(p.hostPort)
+	if p.opt.Trace != nil && p.opt.Trace.GetConn != nil {
+		p.opt.Trace.GetConn(p.hostPort)
 	}
 
 	w := &wantConn{
@@ -141,21 +128,24 @@ func (p *pool) getConn() (pc *persistConn, err error) {
 
 	if p.queueForIdleConn(w) {
 		pc := w.pc
-		if p.Trace != nil && p.Trace.GotConn != nil {
-			p.Trace.GotConn(pc.gotIdleConnTrace(pc.idleAt))
+		if p.opt.Trace != nil && p.opt.Trace.GotConn != nil {
+			p.opt.Trace.GotConn(pc.gotIdleConnTrace(pc.idleAt))
 		}
 
 		return pc, nil
 	}
 
-	go p.dialConnFor(w)
+	if p.opt.MaxConns <= 0 || p.conns < p.opt.MaxConns {
+		p.conns++
+		go p.dialConnFor(w)
+	}
 
 	select {
 	case <-p.closech:
 		return nil, io.EOF
 	case <-w.ready:
-		if w.pc != nil && p.Trace != nil && p.Trace.GotConn != nil {
-			p.Trace.GotConn(GotConnInfo{Conn: w.pc.conn, Reused: w.pc.isReused()})
+		if w.pc != nil && p.opt.Trace != nil && p.opt.Trace.GotConn != nil {
+			p.opt.Trace.GotConn(GotConnInfo{Conn: w.pc.conn, Reused: w.pc.isReused()})
 		}
 
 		if w.err != nil {
@@ -200,15 +190,18 @@ func (p *pool) dialConnFor(w *wantConn) {
 			pc.close(err)
 		}
 	}
+	if err != nil {
+		p.conns--
+	}
 }
 
 func (p *pool) dialConn() (pc *persistConn, err error) {
-	if p.Trace != nil {
-		if p.Trace.ConnectStart != nil {
-			p.Trace.ConnectStart("tcp", p.hostPort)
+	if p.opt.Trace != nil {
+		if p.opt.Trace.ConnectStart != nil {
+			p.opt.Trace.ConnectStart("tcp", p.hostPort)
 		}
-		if p.Trace.ConnectDone != nil {
-			defer func() { p.Trace.ConnectDone("tcp", p.hostPort, err) }()
+		if p.opt.Trace.ConnectDone != nil {
+			defer func() { p.opt.Trace.ConnectDone("tcp", p.hostPort, err) }()
 		}
 	}
 
@@ -222,7 +215,10 @@ func (p *pool) dialConn() (pc *persistConn, err error) {
 		return nil, err
 	}
 
-	return &persistConn{conn: conn}, nil
+	conn.SetWriteDeadline(time.Now().Add(time.Second * 2))
+	bw := bufio.NewWriter(conn)
+
+	return &persistConn{conn: conn, bw: bw}, nil
 }
 
 func (p *pool) tryPutIdleConn(pc *persistConn) error {
@@ -253,7 +249,7 @@ func (p *pool) tryPutIdleConn(pc *persistConn) error {
 		return nil
 	}
 
-	if p.MaxIdleConns > 0 && len(p.idleConn) >= p.MaxIdleConns {
+	if p.opt.MaxIdleConns > 0 && len(p.idleConn) >= p.opt.MaxIdleConns {
 		return errTooManyIdle
 	}
 
@@ -265,7 +261,7 @@ func (p *pool) tryPutIdleConn(pc *persistConn) error {
 
 	p.idleConn = append(p.idleConn, pc)
 	p.idleLRU.add(pc)
-	if p.MaxIdleConns != 0 && len(p.idleConn) > p.MaxIdleConns {
+	if p.opt.MaxIdleConns != 0 && len(p.idleConn) > p.opt.MaxIdleConns {
 		oldest := p.idleLRU.removeOldest()
 		oldest.close(errTooManyIdle)
 		p.removeIdleConnLocked(oldest)
@@ -274,6 +270,13 @@ func (p *pool) tryPutIdleConn(pc *persistConn) error {
 	pc.idleAt = time.Now()
 
 	return nil
+}
+
+func (p *pool) removeIdleConn(pconn *persistConn) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.removeIdleConnLocked(pconn)
 }
 
 func (p *pool) removeIdleConnLocked(pconn *persistConn) bool {
@@ -305,7 +308,9 @@ func (p *pool) removeIdleConnLocked(pconn *persistConn) bool {
 }
 
 type persistConn struct {
-	conn   *net.TCPConn
+	conn *net.TCPConn
+	bw   *bufio.Writer
+
 	mu     sync.Mutex
 	closed bool
 	broken error // set non-nil when conn is closed, before closech is closed
@@ -349,7 +354,7 @@ func (pc *persistConn) isReused() bool {
 }
 
 func (pc *persistConn) shouldRetry(err error) bool {
-	return false
+	return true
 }
 
 func (pc *persistConn) gotIdleConnTrace(idleAt time.Time) (t GotConnInfo) {

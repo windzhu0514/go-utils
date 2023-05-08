@@ -2,118 +2,85 @@ package scan
 
 import (
 	"context"
-	"fmt"
-	"regexp"
+	"errors"
+	"log"
 	"time"
 
-	redisinfo "github.com/geoffreybauduin/redis-info"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type rdbScanner struct {
-	addr     string
+	addrs    []string
 	password string
 	verbose  bool
 }
 
-func NewScanner(addr string, password string, verbose bool) *rdbScanner {
+func NewScanner(addrs []string, password string, verbose bool) *rdbScanner {
 	s := &rdbScanner{
-		addr:     addr,
+		addrs:    addrs,
 		password: password,
 		verbose:  verbose,
 	}
 	return s
 }
 
-func (s *rdbScanner) Scan(match string) error {
+func (s *rdbScanner) Scan(ctx context.Context, match string, handler func(client *redis.Client, key string)) error {
 	if s.verbose {
-		fmt.Printf("Scan addr:%s password:%s verbose:%t pattern:%s\n", s.addr, s.password, s.verbose, match)
+		log.Printf("Scan addr:%v password:%s pattern:%s\n", s.addrs, s.password, match)
 	}
 
-	var rdb redis.Cmdable
-	rdb = redis.NewClient(&redis.Options{
-		Addr:        s.addr,
-		PoolSize:    10,
-		Password:    s.password,
-		DialTimeout: time.Second,
-		DB:          0,
-	})
-
-	rdbInfo, err := rdb.Info(context.TODO(), "cluster").Result()
-	if err != nil {
-		return err
+	if len(s.addrs) == 0 {
+		return errors.New("redis addrs is empty")
 	}
 
-	info, err := redisinfo.Parse(rdbInfo)
-	if err != nil {
-		return err
-	}
-
-	var nodes []string
-	if info.Cluster.ClusterEnabled {
-		resp, err := rdb.ClusterNodes(context.TODO()).Result()
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-
-		reg, err := regexp.Compile("(((2(5[0-5]|[0-4]\\d))|[0-1]?\\d{1,2})(\\.((2(5[0-5]|[0-4]\\d))|[0-1]?\\d{1,2})){3}:[0-9]*).*master")
-		if err != nil {
-			return err
-		}
-
-		resAll := reg.FindAllStringSubmatch(resp, -1)
-		for _, r := range resAll {
-			if len(r) < 2 {
-				continue
-			}
-			nodes = append(nodes, r[1])
-		}
-	} else {
-		nodes = append(nodes, s.addr)
-	}
-
-	for i, addr := range nodes {
-		fmt.Println(i, addr)
-		err := s.scan(addr, match)
-		if err != nil {
-			fmt.Println(err)
-		}
-
-	}
-
-	return nil
-}
-
-func (s *rdbScanner) scan(addr, match string) error {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:        addr,
+		Addr:        s.addrs[0],
 		PoolSize:    10,
 		Password:    s.password,
 		DialTimeout: time.Second,
-		DB:          0,
 	})
 
-	ctx := context.TODO()
-	_, err := rdb.Ping(ctx).Result()
-	if err != nil {
-		fmt.Println(err)
+	var totalAmount int64
+	if len(s.addrs) > 1 {
+		rdbCluster := redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs:       s.addrs,
+			PoolSize:    10,
+			Password:    s.password,
+			DialTimeout: 3 * time.Second,
+		})
+
+		clusterInfo, err := rdb.ClusterInfo(context.TODO()).Result()
+		if err != nil {
+			return err
+		}
+
+		log.Println("\n" + clusterInfo)
+
+		err = rdbCluster.ForEachMaster(ctx, func(ctx context.Context, rdb *redis.Client) error {
+			iter := rdb.Scan(ctx, 0, match, 10000).Iterator()
+			for iter.Next(ctx) {
+				totalAmount++
+
+				key := iter.Val()
+				handler(rdb, key)
+			}
+			return iter.Err()
+		})
+
+		log.Printf("scan over,total keys: %d", totalAmount)
+
 		return err
 	}
 
-	// 查找匹配的key
-	var amount int64
 	iter := rdb.Scan(ctx, 0, match, 10000).Iterator()
 	for iter.Next(ctx) {
+		totalAmount++
+
 		key := iter.Val()
-		amount++
-		fmt.Println(key)
+		handler(rdb, key)
 	}
 
-	if err := iter.Err(); err != nil {
-		panic(err)
-	}
+	log.Printf("scan over,total keys: %d", totalAmount)
 
-	fmt.Printf("%s keys amount:%d\n", addr, amount)
-	return nil
+	return iter.Err()
 }
