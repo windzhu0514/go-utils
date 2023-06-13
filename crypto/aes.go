@@ -8,11 +8,7 @@ import (
 	"github.com/windzhu0514/go-utils/crypto/ecb"
 )
 
-// AESCipher AES Advanced Encryption Standard
-// 支持 ECB、CBC、CFB、CTR、GCM、OFB
-// key 长度 16、24、32 位，即 128、192、256 比特（AES-128、AES-192、AES-256），位数越大安全性越高但加密速度越慢
-type AESCipher struct {
-	Key            []byte // 对称加密Key或者公钥私钥
+type cipherConfig struct {
 	IV             []byte
 	BlockMode      BlockMode
 	PaddingMode    PaddingMode
@@ -21,52 +17,60 @@ type AESCipher struct {
 	AdditionalData []byte
 }
 
-type Option func(*AESCipher)
+// AESCipher AES Advanced Encryption Standard
+// 支持 ECB、CBC、CFB、CTR、GCM、OFB
+// key 长度 16、24、32 位，即 128、192、256 bit（AES-128、AES-192、AES-256），位数越大安全性越高但加密速度越慢
+type AESCipher struct {
+	key []byte
+	cipherConfig
+}
+
+type Option func(*cipherConfig)
 
 func WithIV(iv []byte) Option {
-	return func(a *AESCipher) {
+	return func(a *cipherConfig) {
 		a.IV = iv
 	}
 }
 
 func WithBlockMode(bc BlockMode) Option {
-	return func(a *AESCipher) {
+	return func(a *cipherConfig) {
 		a.BlockMode = bc
 	}
 }
 
 func WithPaddingMode(padding PaddingMode) Option {
-	return func(a *AESCipher) {
+	return func(a *cipherConfig) {
 		a.PaddingMode = padding
 	}
 }
 
 func WithTagSize(tagSize int) Option {
-	return func(a *AESCipher) {
+	return func(a *cipherConfig) {
 		a.TagSize = tagSize
 	}
 }
 
 func WithNonce(nonce []byte) Option {
-	return func(a *AESCipher) {
+	return func(a *cipherConfig) {
 		a.Nonce = nonce
 	}
 }
 
 // gcm
 func WithAdditionalData(additionalData []byte) Option {
-	return func(a *AESCipher) {
+	return func(a *cipherConfig) {
 		a.AdditionalData = additionalData
 	}
 }
 
-func NewAES(key []byte, opts ...Option) *AESCipher {
+func NewAES(key []byte, opts ...Option) Cipher {
 	c := &AESCipher{
-		Key: key,
+		key: key,
 	}
 
 	for _, opt := range opts {
-		opt(c)
+		opt(&c.cipherConfig)
 	}
 
 	if c.PaddingMode == nil {
@@ -81,26 +85,21 @@ func NewAES(key []byte, opts ...Option) *AESCipher {
 }
 
 func (c *AESCipher) Encrypt(plainTxt []byte) ([]byte, error) {
-	block, err := aes.NewCipher(c.Key)
+	block, err := aes.NewCipher(c.key)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.BlockMode.Encrypt(c, block, plainTxt)
+	return c.BlockMode.Encrypt(&c.cipherConfig, block, plainTxt)
 }
 
 func (c *AESCipher) Decrypt(cipherTxt []byte) ([]byte, error) {
-	block, err := aes.NewCipher(c.Key)
+	block, err := aes.NewCipher(c.key)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.BlockMode.Decrypt(c, block, cipherTxt)
-}
-
-type BlockMode interface {
-	Encrypt(*AESCipher, cipher.Block, []byte) ([]byte, error)
-	Decrypt(*AESCipher, cipher.Block, []byte) ([]byte, error)
+	return c.BlockMode.Decrypt(&c.cipherConfig, block, cipherTxt)
 }
 
 // ECB 模式(lectronic codebook）
@@ -109,7 +108,7 @@ var ECB ecbBlockMode
 
 type ecbBlockMode struct{}
 
-func (e ecbBlockMode) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e ecbBlockMode) Encrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	mode := ecb.NewECBEncrypter(block)
 	src = c.PaddingMode.Padding(src, block.BlockSize())
 	dst := make([]byte, len(src))
@@ -118,7 +117,7 @@ func (e ecbBlockMode) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]b
 	return dst, nil
 }
 
-func (e ecbBlockMode) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e ecbBlockMode) Decrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	mode := ecb.NewECBDecrypter(block)
 	dst := make([]byte, len(src))
 	mode.CryptBlocks(dst, src)
@@ -137,7 +136,7 @@ var CBC cbc
 
 type cbc struct{}
 
-func (e cbc) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e cbc) Encrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	if len(c.IV) != block.BlockSize() {
 		return nil, errors.New("IV length must equal block size")
 	}
@@ -150,7 +149,7 @@ func (e cbc) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 	return dst, nil
 }
 
-func (e cbc) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e cbc) Decrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	if len(c.IV) != block.BlockSize() {
 		return nil, errors.New("IV length must equal block size")
 	}
@@ -166,7 +165,7 @@ var CFB cfb
 
 type cfb struct{}
 
-func (e cfb) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e cfb) Encrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	if len(c.IV) != block.BlockSize() {
 		return nil, errors.New("IV length must equal block size")
 	}
@@ -178,7 +177,7 @@ func (e cfb) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 	return dst, nil
 }
 
-func (e cfb) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e cfb) Decrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	if len(c.IV) != block.BlockSize() {
 		return nil, errors.New("IV length must equal block size")
 	}
@@ -194,7 +193,7 @@ var CTR ctr
 
 type ctr struct{}
 
-func (e ctr) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e ctr) Encrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	if len(c.IV) != block.BlockSize() {
 		return nil, errors.New("IV length must equal block size")
 	}
@@ -206,7 +205,7 @@ func (e ctr) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 	return dst, nil
 }
 
-func (e ctr) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e ctr) Decrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	if len(c.IV) != block.BlockSize() {
 		return nil, errors.New("IV length must equal block size")
 	}
@@ -223,7 +222,7 @@ var GCM gcm
 
 type gcm struct{}
 
-func (e gcm) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e gcm) Encrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	var (
 		aesgcm cipher.AEAD
 		err    error
@@ -244,7 +243,7 @@ func (e gcm) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 	return aesgcm.Seal(nil, c.Nonce, src, c.AdditionalData), nil
 }
 
-func (e gcm) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e gcm) Decrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	var (
 		aesgcm cipher.AEAD
 		err    error
@@ -269,7 +268,7 @@ var OFB ofb
 
 type ofb struct{}
 
-func (e ofb) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e ofb) Encrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	mode := cipher.NewOFB(block, c.IV)
 	dst := make([]byte, len(src))
 	mode.XORKeyStream(dst, src)
@@ -277,7 +276,7 @@ func (e ofb) Encrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, erro
 	return dst, nil
 }
 
-func (e ofb) Decrypt(c *AESCipher, block cipher.Block, src []byte) ([]byte, error) {
+func (e ofb) Decrypt(c *cipherConfig, block cipher.Block, src []byte) ([]byte, error) {
 	mode := cipher.NewOFB(block, c.IV)
 	dst := make([]byte, len(src))
 	mode.XORKeyStream(dst, src)
