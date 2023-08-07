@@ -102,8 +102,9 @@ func (c *AESCipher) Decrypt(cipherTxt []byte) ([]byte, error) {
 	return c.BlockMode.Decrypt(&c.cipherConfig, block, cipherTxt)
 }
 
-// ECB 模式(lectronic codebook）
-// 对每个明文块应用秘钥，缺点在于同样的平文块会被加密成相同的密文块，因此，它不能很好的隐藏数据模式
+// ECB 电子密码本模式(lectronic codebook）
+// 最简单的模式，也是最不安全的模式。需要加密的消息按照块密码的块大小被分为数个块，并对每个块进行独立加密，相同明文会产生同样的密文组。
+// 这会暴露明文数据的格式和统计特征，从而有潜在的安全风险，但是用于短数据(如加密密钥)时非常理想
 var ECB ecbBlockMode
 
 type ecbBlockMode struct{}
@@ -125,7 +126,7 @@ func (e ecbBlockMode) Decrypt(c *cipherConfig, block cipher.Block, src []byte) (
 	return c.PaddingMode.UnPadding(dst, block.BlockSize())
 }
 
-// CBC 模式(Cipher-block chaining)
+// CBC 密码块链模式(Cipher-block chaining)
 // 每个明文块先与前一个密文块进行异或后，再进行加密。在这种方法中，每个密文块都依赖于它前面的所有平文块。
 // 同时，为了保证每条消息的唯一性，在第一个块中需要使用初始化向量。
 // CBC是最为常用的工作模式。它的主要缺点在于加密过程是串行的，无法被并行化，而且消息必须被填充到块大小的整数倍。

@@ -1,3 +1,6 @@
+// https://github.com/flyaways/pool/blob/master/pool_tcp.go
+// https://github.com/fatih/pool/blob/master/channel.go
+// https://github.com/redis/go-redis
 package tcpool
 
 import (
@@ -20,10 +23,10 @@ var (
 )
 
 type Option struct {
-	MaxIdleConns      int // default 0
-	MaxConns          int // default 3
-	MaxBadConnRetries int // default 3
-	Trace             *ConnTrace
+	MaxIdleConns int // default 0
+	MaxConns     int // default 3
+	MaxRetries   int // default 3
+	Trace        *ConnTrace
 }
 
 type pool struct {
@@ -46,15 +49,15 @@ func New(hostPort string, opt Option) io.WriteCloser {
 		p.opt.MaxConns = 3
 	}
 
-	if p.opt.MaxBadConnRetries == 0 {
-		p.opt.MaxBadConnRetries = 3
+	if p.opt.MaxRetries == 0 {
+		p.opt.MaxRetries = 3
 	}
 
 	return p
 }
 
 func (p *pool) Write(bytes []byte) (int, error) {
-	for i := 0; i < p.opt.MaxBadConnRetries; i++ {
+	for i := 0; i < p.opt.MaxRetries; i++ {
 		select {
 		case <-p.closech:
 			return 0, errPoolClosed

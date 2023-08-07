@@ -44,7 +44,7 @@ func DBFields(rv reflect.Value) []string {
 	panic(fmt.Errorf("dbFields requires a struct or a map, found: %s", rv.Kind().String()))
 }
 
-func WithTxEnt(ctx context.Context, client *ent.Client, fn func(tx *ent.Tx) error) (err error) {
+func WithTxEnt(ctx context.Context, client *ent.Client, fn func(ctx context.Context, client *ent.Client) error) (err error) {
 	var tx *ent.Tx
 	tx, err = client.Tx(ctx)
 	if err != nil {
@@ -60,7 +60,7 @@ func WithTxEnt(ctx context.Context, client *ent.Client, fn func(tx *ent.Tx) erro
 		}
 	}()
 
-	if err = fn(tx); err != nil {
+	if err = fn(ctx, tx.Client()); err != nil {
 		if rerr := tx.Rollback(); rerr != nil {
 			err = fmt.Errorf("rolling back transaction: %w", rerr)
 		}
