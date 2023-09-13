@@ -6,12 +6,16 @@ package tcpool
 import (
 	"bufio"
 	"container/list"
+	"context"
 	"errors"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
+
+	uuid "github.com/satori/go.uuid"
 )
 
 var (
@@ -40,6 +44,8 @@ type pool struct {
 	closech      chan struct{}
 	closed       bool
 	conns        int
+	dialContext  func(ctx context.Context, network, addr string) (net.Conn, error)
+	logger       *slog.Logger
 }
 
 func New(hostPort string, opt Option) io.WriteCloser {
@@ -53,10 +59,23 @@ func New(hostPort string, opt Option) io.WriteCloser {
 		p.opt.MaxRetries = 3
 	}
 
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	p.dialContext = dialer.DialContext
+
+	if p.logger == nil {
+		p.logger = slog.Default()
+	}
+
 	return p
 }
 
-func (p *pool) Write(bytes []byte) (int, error) {
+func (p *pool) Write(bytes []byte) (n int, err error) {
+	traceID := uuid.NewV4().String()
+	logger := slog.With("trace_id", traceID)
+
 	for i := 0; i < p.opt.MaxRetries; i++ {
 		select {
 		case <-p.closech:
@@ -64,12 +83,14 @@ func (p *pool) Write(bytes []byte) (int, error) {
 		default:
 		}
 
-		pc, err := p.getConn()
+		var pc *persistConn
+		pc, err = p.getConn()
 		if err != nil {
+			logger.Error("getConn: " + err.Error())
 			return 0, err
 		}
 
-		n, err := pc.bw.Write(bytes)
+		n, err = pc.bw.Write(bytes)
 		if err == nil {
 			err = p.tryPutIdleConn(pc)
 			if p.opt.Trace != nil && p.opt.Trace.PutIdleConn != nil {
@@ -79,24 +100,25 @@ func (p *pool) Write(bytes []byte) (int, error) {
 			err = pc.bw.Flush()
 
 			return n, err
-		} else {
-			log.Println("Write failed:" + err.Error())
-			pc.close(err)
-			p.removeIdleConn(pc)
-			p.conns--
-
-			if p.opt.Trace != nil && p.opt.Trace.PutIdleConn != nil {
-				p.opt.Trace.PutIdleConn(err)
-			}
 		}
 
-		if !pc.shouldRetry(err) {
-			time.Sleep(time.Millisecond * 500)
-			return 0, err
+		logger.Error("Write: " + err.Error())
+		pc.close(err)
+		p.removeIdleConn(pc)
+		p.conns--
+
+		if p.opt.Trace != nil && p.opt.Trace.PutIdleConn != nil {
+			p.opt.Trace.PutIdleConn(err)
 		}
+
+		// if pc.shouldRetry(err) {
+		// 	time.Sleep(time.Millisecond * 500)
+		// 	return 0, err
+		// }
+		logger.Info("retry")
 	}
 
-	return 0, ErrGetConnFailed
+	return n, err
 }
 
 func (p *pool) Close() error {
@@ -189,7 +211,7 @@ func (p *pool) dialConnFor(w *wantConn) {
 	pc, err := p.dialConn()
 	delivered := w.tryDeliver(pc, err)
 	if err == nil && !delivered {
-		if err := p.tryPutIdleConn(pc); err != nil {
+		if err2 := p.tryPutIdleConn(pc); err2 != nil {
 			pc.close(err)
 		}
 	}
@@ -208,17 +230,22 @@ func (p *pool) dialConn() (pc *persistConn, err error) {
 		}
 	}
 
-	raddr, err := net.ResolveTCPAddr("tcp", p.hostPort)
+	// raddr, err := net.ResolveTCPAddr("tcp", p.hostPort)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// conn, err := net.DialTCP("tcp", nil, raddr)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	conn, err := p.dialContext(context.Background(), "tcp", p.hostPort)
 	if err != nil {
 		return nil, err
 	}
 
-	conn, err := net.DialTCP("tcp", nil, raddr)
-	if err != nil {
-		return nil, err
-	}
-
-	conn.SetWriteDeadline(time.Now().Add(time.Second * 2))
+	//	conn.SetWriteDeadline(time.Now().Add(time.Second * 2))
 	bw := bufio.NewWriter(conn)
 
 	return &persistConn{conn: conn, bw: bw}, nil
@@ -311,7 +338,7 @@ func (p *pool) removeIdleConnLocked(pconn *persistConn) bool {
 }
 
 type persistConn struct {
-	conn *net.TCPConn
+	conn net.Conn
 	bw   *bufio.Writer
 
 	mu     sync.Mutex

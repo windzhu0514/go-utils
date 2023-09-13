@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 
-	"github.com/windzhu0514/go-utils/httpclient"
+	"git.17usoft.com/GS-util/gocore/httpclient"
 )
 
 func ExamplePathEscape() {

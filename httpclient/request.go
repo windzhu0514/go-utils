@@ -41,6 +41,11 @@ func NewRequestWithContext(ctx context.Context, method, url string) *Request {
 	return defaultClient.NewRequestWithContext(ctx, method, url)
 }
 
+func (r *Request) SetClient(cli *Client) *Request {
+	r.client = cli
+	return r
+}
+
 // SetHead 设置head 自动规范化
 func (r *Request) SetHead(key, value string) *Request {
 	r.heads.Set(key, value)
@@ -94,6 +99,15 @@ func (r *Request) SetQueryParam(key, value string) *Request {
 	return r
 }
 
+// SetQueryParam 添加URL path参数
+func (r *Request) SetQueryParams(params map[string]string) *Request {
+	for k, v := range params {
+		r.queryParam.Set(k, v)
+		r.queryParamKeys = append(r.queryParamKeys, k)
+	}
+	return r
+}
+
 // KeepQueryParamOrder 保持查询参数添加顺序
 func (r *Request) KeepQueryParamOrder(keepParamAddOrder bool) *Request {
 	r.keepParamAddOrder = keepParamAddOrder
@@ -103,6 +117,14 @@ func (r *Request) KeepQueryParamOrder(keepParamAddOrder bool) *Request {
 // SetFormData 添加请求参数
 func (r *Request) SetFormData(key, value string) *Request {
 	r.formData.Set(key, value)
+	return r
+}
+
+// SetRawFormData 添加请求参数
+func (r *Request) SetRawFormData(formData map[string]string) *Request {
+	for k, v := range formData {
+		r.formData.Set(k, v)
+	}
 	return r
 }
 
@@ -338,4 +360,8 @@ func (r *Request) Byte() (statusCode int, resp []byte, err error) {
 	statusCode = response.resp.StatusCode
 	resp, err = response.Body()
 	return
+}
+
+func (r *Request) GetUrl() string {
+	return r.url
 }

@@ -19,7 +19,7 @@ func client() {
 		http.ListenAndServe(":9998", nil)
 	}()
 
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.SetFlags(log.Ldate | log.Lmicroseconds | log.Lshortfile)
 
 	trace := &tcpool.ConnTrace{
 		GetConn: func(hostPort string) { log.Println("GetConn: " + hostPort) },

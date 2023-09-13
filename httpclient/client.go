@@ -2,12 +2,16 @@ package httpclient
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	stdurl "net/url"
 	"time"
+
+	"golang.org/x/net/http2"
 
 	"github.com/windzhu0514/go-utils/httpclient/metadata"
 )
@@ -18,6 +22,27 @@ func Get(url string) (statusCode int, resp []byte, err error) {
 
 func Post(url, contentType string, body interface{}) (statusCode int, resp []byte, err error) {
 	return defaultClient.Post(url, contentType, body)
+}
+
+func AddCookie(cookie *http.Cookie) {
+	defaultClient.AddCookie(cookie)
+}
+
+func AddCookies(cookies []*http.Cookie) {
+	defaultClient.AddCookies(cookies)
+}
+
+func DelCookie(cookie *http.Cookie) {
+	for i, cc := range defaultClient.cookies {
+		if cookieID(cc) == cookieID(cookie) {
+			defaultClient.cookies = append(defaultClient.cookies[:i], defaultClient.cookies[i+1:]...)
+		}
+	}
+}
+
+// get cookies from client cookie jar
+func Cookies(url string) ([]*http.Cookie, error) {
+	return defaultClient.Cookies(url)
 }
 
 func SetTransport(rt http.RoundTripper) *Client {
@@ -128,6 +153,8 @@ const (
 )
 
 var defaultClient = NewDefaultClient()
+
+var defaultHttp2Client = NewClientHttp2()
 
 type Client struct {
 	client        *http.Client
@@ -245,6 +272,27 @@ func NewClient(opts ...ClientOption) *Client {
 	return c
 }
 
+func NewClientHttp2(opts ...ClientOption) *Client {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+	}
+	http2.ConfigureTransport(transport)
+	c := &Client{client: &http.Client{Transport: transport}}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
 func NewWithClient(hc *http.Client, opts ...ClientOption) *Client {
 	c := &Client{client: hc}
 	if c.client == nil {
@@ -336,6 +384,7 @@ func (c *Client) AddCookie(cookie *http.Cookie) *Client {
 	if c.client.Jar == nil {
 		c.client.Jar, _ = cookiejar.New(nil)
 	}
+
 	c.cookies = append(c.cookies, cookie)
 	return c
 }
@@ -345,6 +394,23 @@ func (c *Client) AddCookies(cookies []*http.Cookie) *Client {
 		c.client.Jar, _ = cookiejar.New(nil)
 	}
 	c.cookies = append(c.cookies, cookies...)
+	return c
+}
+
+// SetCookie 避免重复的cookie
+func (c *Client) SetCookie(cookie *http.Cookie) *Client {
+	if c.client.Jar == nil {
+		c.client.Jar, _ = cookiejar.New(nil)
+	}
+	c.DelCookie(cookie)
+	c.AddCookie(cookie)
+	return c
+}
+
+func (c *Client) SetCookies(cookies []*http.Cookie) *Client {
+	for _, cc := range cookies {
+		c.SetCookie(cc)
+	}
 	return c
 }
 
@@ -361,6 +427,32 @@ func (c *Client) DelCookie(cookie *http.Cookie) *Client {
 	return c
 }
 
+func (c *Client) Cookies(url string) ([]*http.Cookie, error) {
+	if c.client.Jar == nil {
+		return nil, errors.New("client not enable cookie jar")
+	}
+
+	URL, err := stdurl.Parse(url)
+	if err != nil {
+		return nil, err
+	}
+
+	cookies := c.client.Jar.Cookies(URL)
+	if len(cookies) == 0 {
+		return nil, errors.New("cookies is empty")
+	}
+
+	return cookies, nil
+}
+
+func (c *Client) SetCookieJar(cookieJar http.CookieJar) {
+	c.client.Jar = cookieJar
+}
+
+func (c *Client) GetCookieJar() http.CookieJar {
+	return c.client.Jar
+}
+
 func (c *Client) SetJsonEscapeHTML(jsonEscapeHTML bool) *Client {
 	c.jsonEscapeHTML = jsonEscapeHTML
 	return c
@@ -374,5 +466,22 @@ func (c *Client) SetJsonIndent(prefix, indent string) *Client {
 
 func (c *Client) KeepParamAddOrder(keepParamAddOrder bool) *Client {
 	c.keepParamAddOrder = keepParamAddOrder
+	return c
+}
+
+// SetProxy 设置代理时保证用底层共用一个client
+func (c *Client) SetProxy(ps ProxySelector) *Client {
+	c.proxySelector = ps
+	c.transport().Proxy = ps.ProxyFunc
+	return c
+}
+
+// GetMetaDataByKey 通过key获取metadata
+func (c *Client) GetMetaDataByKey(key string) string {
+	return c.metadata.Get(key)
+}
+
+func (c *Client) SetTimeout(timeout time.Duration) *Client {
+	c.client.Timeout = timeout
 	return c
 }

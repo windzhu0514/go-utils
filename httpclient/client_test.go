@@ -28,3 +28,21 @@ func TestGet2(t *testing.T) {
 
 	fmt.Println(string(dump))
 }
+
+func TestSetCookie(t *testing.T) {
+	client := NewClient()
+	var cookies []*http.Cookie
+	cookies = append(cookies, &http.Cookie{Name: "Channel", Value: "Android"})
+	cookies = append(cookies, &http.Cookie{Name: "lang", Value: "Android"})
+	cookies = append(cookies, &http.Cookie{Name: "issu", Value: "Android"})
+	cookies = append(cookies, &http.Cookie{Name: "issu", Value: "Android"})
+	client.SetCookies(cookies)
+	dumplicatMap := make(map[string]bool)
+	for _, cc := range client.cookies {
+		fmt.Println("name: ", cc.Name)
+		if dumplicatMap[cc.Name] {
+			t.Fail()
+		}
+		dumplicatMap[cc.Name] = true
+	}
+}

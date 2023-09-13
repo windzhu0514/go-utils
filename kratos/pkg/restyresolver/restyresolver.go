@@ -74,7 +74,7 @@ func New(ctx context.Context, logger log.Logger, discovery registry.Discovery, s
 
 				nodes := make([]selector.Node, 0)
 				for _, ins := range services {
-					nodes = append(nodes, selector.NewNode(ins.Endpoints[0], ins))
+					nodes = append(nodes, selector.NewNode(target.Scheme, ins.Endpoints[0], ins))
 				}
 
 				r.selectors[target.Endpoint].Apply(nodes)
@@ -119,7 +119,7 @@ func New(ctx context.Context, logger log.Logger, discovery registry.Discovery, s
 
 				nodes := make([]selector.Node, 0)
 				for _, ins := range services {
-					nodes = append(nodes, selector.NewNode(ins.Endpoints[0], ins))
+					nodes = append(nodes, selector.NewNode(target.Scheme, ins.Endpoints[0], ins))
 				}
 
 				r.selectors[target.Endpoint].Apply(nodes)
