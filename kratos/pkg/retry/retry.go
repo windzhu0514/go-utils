@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime"
 	"time"
 
@@ -292,7 +293,7 @@ func (r *Retry) do(msg amqp.Delivery) {
 
 	URL := callbackMsg.Host
 	if callbackMsg.Path != "" {
-		URL = utils.JoinURLPath(callbackMsg.Host, callbackMsg.Path)
+		URL = path.Join(([]string{URL, callbackMsg.Path})...)
 	}
 
 	resp, err := req.Post(URL)

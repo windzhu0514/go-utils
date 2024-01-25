@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"path"
 	"testing"
 )
 
@@ -61,4 +62,21 @@ func TestCompareHideString(t *testing.T) {
 	fmt.Println(CompareHideString("3502************23", "350204199806138023", "*"))
 	fmt.Println(CompareHideString("*****1", "11111*", "*"))
 	fmt.Println(CompareHideString("你说什么", "你说**", "*"))
+}
+
+func TestPathJoin(t *testing.T) {
+	tt := []struct {
+		paths []string
+		want  string
+	}{
+		{[]string{"a", "b", "c"}, "a/b/c"},
+		{[]string{"a", "b", "c/"}, "a/b/c/"},
+		{[]string{"http://www.example.com/", "/sub", "/item/"}, "http:/www.example.com/sub/item"},
+	}
+
+	for _, tc := range tt {
+		if got := path.Join(tc.paths...); got != tc.want {
+			t.Errorf("PathJoin(%v) = %v, want %v", tc.paths, got, tc.want)
+		}
+	}
 }
