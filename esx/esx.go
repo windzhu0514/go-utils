@@ -77,7 +77,7 @@ func (e *ES) SearchWithRaw(index string, jsonBody string, handler func(string)) 
 			handler(v.String())
 		}
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(100 * time.Millisecond)
 
 		from += size
 	}
