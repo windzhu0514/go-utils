@@ -81,21 +81,31 @@ func (c *Channel) deleteRecordedConsumer(consumerTag string) {
 }
 
 func (c *Channel) recover() {
-	c.channel.Qos(c.recordedPrefetchCount, c.recordedPrefetchSize, c.recordedPrefetchGlobal)
+	if err := c.channel.Qos(c.recordedPrefetchCount, c.recordedPrefetchSize, c.recordedPrefetchGlobal); err != nil {
+		c.logger.Error("failed to set Qos", "error", err)
+	}
 
 	for name, v := range c.recordedExchanges {
-		c.ExchangeDeclare(name, v.Kind, v.Durable, v.AutoDelete, false, v.Args)
+		if err := c.ExchangeDeclare(name, v.Kind, v.Durable, v.AutoDelete, false, v.Args); err != nil {
+			c.logger.Error("failed to declare exchange", "name", name, "error", err)
+		}
 	}
 
 	for name, v := range c.recordedQueues {
-		c.QueueDeclare(name, v.Durable, v.AutoDelete, v.Exclusive, v.Args)
+		if _, err := c.QueueDeclare(name, v.Durable, v.AutoDelete, v.Exclusive, v.Args); err != nil {
+			c.logger.Error("failed to declare queue", "name", name, "error", err)
+		}
 	}
 
 	for _, v := range c.recordedBindings {
-		c.QueueBind(v.QueueName, v.RoutingKey, v.ExchangeName, false, v.Args)
+		if err := c.QueueBind(v.QueueName, v.RoutingKey, v.ExchangeName, false, v.Args); err != nil {
+			c.logger.Error("failed to bind queue", "queue", v.QueueName, "exchange", v.ExchangeName, "routingKey", v.RoutingKey, "error", err)
+		}
 	}
 
 	for _, v := range c.recordedConsumers {
-		c.Consume(v.QueueName, v.ConsumerTag, v.AutoAck, v.Exclusive, false, v.NoWait, v.Args, v.Consumer)
+		if err := c.Consume(v.QueueName, v.ConsumerTag, v.AutoAck, v.Exclusive, false, v.NoWait, v.Args, v.Consumer); err != nil {
+			c.logger.Error("failed to consume", "queue", v.QueueName, "consumerTag", v.ConsumerTag, "error", err)
+		}
 	}
 }
