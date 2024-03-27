@@ -7,7 +7,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func New(url string) (*Connection, error) {
+func Dial(url string) (*Connection, error) {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	conn, err := amqp.Dial(url)
@@ -16,14 +16,14 @@ func New(url string) (*Connection, error) {
 	}
 
 	c := &Connection{
-		url:    url,
-		logger: slog.Default(),
-		conn:   conn,
-		close:  make(chan struct{}),
+		url:        url,
+		logger:     slog.Default(),
+		Connection: conn,
+		close:      make(chan struct{}),
 	}
 
 	c.chanNotifyClose = make(chan *amqp.Error)
-	c.conn.NotifyClose(c.chanNotifyClose)
+	c.Connection.NotifyClose(c.chanNotifyClose)
 
 	go c.handleReconnect()
 

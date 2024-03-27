@@ -81,7 +81,7 @@ func (c *Channel) deleteRecordedConsumer(consumerTag string) {
 }
 
 func (c *Channel) recover() {
-	if err := c.channel.Qos(c.recordedPrefetchCount, c.recordedPrefetchSize, c.recordedPrefetchGlobal); err != nil {
+	if err := c.Channel.Qos(c.recordedPrefetchCount, c.recordedPrefetchSize, c.recordedPrefetchGlobal); err != nil {
 		c.logger.Error("failed to set Qos", "error", err)
 	}
 
