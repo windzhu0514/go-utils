@@ -2,6 +2,7 @@ package statelessfsm
 
 import "context"
 
+// type State[T any] func(ctx context.Context, args T) (T, State[T], error)
 type FSM interface {
 	GetMachineId() string
 }

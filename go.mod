@@ -1,6 +1,6 @@
 module github.com/windzhu0514/go-utils
 
-go 1.21
+go 1.23
 
 require (
 	entgo.io/ent v0.11.3
@@ -16,6 +16,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/satori/go.uuid v1.2.0
 	github.com/streadway/amqp v1.0.0
+	github.com/tidwall/sjson v1.2.5
 	go.uber.org/zap v1.23.0
 )
 
