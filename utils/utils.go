@@ -1,10 +1,8 @@
 package utils
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -13,45 +11,10 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"text/scanner"
 	"time"
 	"unicode"
 	"unsafe"
 )
-
-// FormatJSONStr format no-stand json str
-func FormatJSONStr(str string) string {
-	replacer := strings.NewReplacer("\t", "", "\n", "", "\v", "", "\f", "", "\r", "", " ", "")
-	str = replacer.Replace(str)
-
-	var s scanner.Scanner
-	s.Init(strings.NewReader(str))
-
-	retStr := ""
-	for s.Scan() != scanner.EOF {
-		token := s.TokenText()
-
-		next := s.Peek()
-		if next == ':' {
-			if !strings.HasPrefix(token, "\"") {
-				token = "\"" + token
-			}
-			if !strings.HasSuffix(token, "\"") {
-				token += "\""
-			}
-		}
-
-		if next == ']' || next == '}' {
-			if token == "," {
-				continue
-			}
-		}
-
-		retStr += token
-	}
-
-	return retStr
-}
 
 // EqualFloat64 比较float64 f1 f2可以是字符串或者float64
 func EqualFloat64(f1 interface{}, f2 interface{}) (int, error) {
@@ -152,40 +115,6 @@ func IsChinese(str string) bool {
 	}
 
 	return true
-}
-
-func JsonMarshalByte(v interface{}) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-
-	return data
-}
-
-func JsonMarshalString(v interface{}) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-
-	return string(data)
-}
-
-func JsonEncodeByte(v interface{}, escapeHTML ...bool) []byte {
-	var buff bytes.Buffer
-	enc := json.NewEncoder(&buff)
-
-	if len(escapeHTML) > 0 {
-		enc.SetEscapeHTML(escapeHTML[0])
-	}
-
-	err := enc.Encode(v)
-	if err != nil {
-		return nil
-	}
-
-	return buff.Bytes()
 }
 
 var delimiter = []byte("\n")
@@ -321,27 +250,6 @@ func IsPowerOfTwo(x int) bool {
 
 func NameOfFunction(f interface{}) string {
 	return runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-}
-
-// 函数执行时间
-// defer Elapsed.Stop()
-type elapsedTime struct {
-	start time.Time
-}
-
-func (e *elapsedTime) Stop() {
-	elapsed := time.Now().Sub(e.start)
-	pc, _, _, _ := runtime.Caller(1)
-	f := runtime.FuncForPC(pc)
-	fmt.Println(f.Name(), "耗时:", elapsed)
-}
-
-func Elapsed() interface {
-	Stop()
-} {
-	var e elapsedTime
-	e.start = time.Now()
-	return &e
 }
 
 // IPv4 点分十进制与uint32的转换

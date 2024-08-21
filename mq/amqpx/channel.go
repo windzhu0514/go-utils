@@ -64,39 +64,110 @@ func (c *Channel) Qos(prefetchCount, prefetchSize int, global bool) error {
 
 func (c *Channel) ExchangeDeclare(name string, kind string, durable bool, autoDelete bool, internal bool, args amqp.Table) error {
 	err := c.Channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, false, args)
+	if err != nil {
+		return err
+	}
+
 	c.recordExchange(name, &RecordedExchange{Kind: kind, Durable: durable, AutoDelete: autoDelete, Args: args})
-	return err
+	return nil
 }
 
 func (c *Channel) ExchangeDeclareNoWait(name string, kind string, durable bool, autoDelete bool, internal bool, args amqp.Table) error {
 	err := c.Channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, true, args)
+	if err != nil {
+		return err
+	}
+
 	c.recordExchange(name, &RecordedExchange{Kind: kind, Durable: durable, AutoDelete: autoDelete, Args: args})
-	return err
+	return nil
+}
+
+func (c *Channel) ExchangeDelete(name string, ifUnused bool) error {
+	c.deleteRecordedExchange(name)
+
+	return c.Channel.ExchangeDelete(name, ifUnused, false)
+}
+
+func (c *Channel) ExchangeDeleteNoWait(name string, ifUnused bool) error {
+	c.deleteRecordedExchange(name)
+
+	return c.Channel.ExchangeDelete(name, ifUnused, true)
 }
 
 func (c *Channel) QueueDeclare(name string, durable bool, autoDelete bool, exclusive bool, args amqp.Table) (amqp.Queue, error) {
 	queue, err := c.Channel.QueueDeclare(name, durable, autoDelete, exclusive, false, args)
+	if err != nil {
+		return amqp.Queue{}, err
+	}
+
 	c.recordedQueue(queue.Name, &RecordedQueue{Durable: durable, AutoDelete: autoDelete, Exclusive: exclusive, Args: args})
-	return queue, err
+	return queue, nil
 }
 
 func (c *Channel) QueueDeclareNoWait(name string, durable bool, autoDelete bool, exclusive bool, args amqp.Table) (amqp.Queue, error) {
 	queue, err := c.Channel.QueueDeclare(name, durable, autoDelete, exclusive, true, args)
+	if err != nil {
+		return amqp.Queue{}, err
+	}
+
 	c.recordedQueue(queue.Name, &RecordedQueue{Durable: durable, AutoDelete: autoDelete, Exclusive: exclusive, Args: args})
-	return queue, err
+	return queue, nil
 }
 
-func (c *Channel) QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error {
-	err := c.Channel.QueueBind(name, key, exchange, noWait, args)
+func (c *Channel) QueueDelete(name string, ifUnused, ifEmpty bool) (int, error) {
+	c.deleteRecordedQueue(name)
+
+	return c.Channel.QueueDelete(name, ifUnused, ifEmpty, false)
+}
+
+func (c *Channel) QueueDeleteNoWait(name string, ifUnused, ifEmpty bool) (int, error) {
+	c.deleteRecordedQueue(name)
+
+	return c.Channel.QueueDelete(name, ifUnused, ifEmpty, true)
+}
+
+func (c *Channel) QueueBind(name, key, exchange string, args amqp.Table) error {
+	err := c.Channel.QueueBind(name, key, exchange, false, args)
+	if err != nil {
+		return err
+	}
+
 	c.recordQueueBinding(&RecordedBinding{QueueName: name, ExchangeName: exchange, RoutingKey: key, Args: args})
-	return err
+	return nil
+}
+
+func (c *Channel) QueueBindNoWait(name, key, exchange string, args amqp.Table) error {
+	err := c.Channel.QueueBind(name, key, exchange, true, args)
+	if err != nil {
+		return err
+	}
+
+	c.recordQueueBinding(&RecordedBinding{QueueName: name, ExchangeName: exchange, RoutingKey: key, Args: args})
+	return nil
+}
+
+func (c *Channel) QueueUnbind(name, key, exchange string, args amqp.Table) error {
+	c.deleteRecordedQueueBinding(&RecordedBinding{QueueName: name, ExchangeName: exchange, RoutingKey: key, Args: args})
+	return c.Channel.QueueUnbind(name, key, exchange, args)
 }
 
 func (c *Channel) PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
 	return c.Channel.PublishWithContext(ctx, exchange, key, mandatory, immediate, msg)
 }
 
-func (c *Channel) Consume(queue, consumerTag string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table, consumer Consumer) error {
+func (c *Channel) PublishWithDeferredConfirmWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) (*amqp.DeferredConfirmation, error) {
+	return c.Channel.PublishWithDeferredConfirmWithContext(ctx, exchange, key, mandatory, immediate, msg)
+}
+
+func (c *Channel) Consume(queue, consumerTag string, autoAck, exclusive, noLocal bool, args amqp.Table, consumer Consumer) error {
+	return c.consume(queue, consumerTag, autoAck, exclusive, noLocal, false, args, consumer)
+}
+
+func (c *Channel) ConsumeNowait(queue, consumerTag string, autoAck, exclusive, noLocal bool, args amqp.Table, consumer Consumer) error {
+	return c.consume(queue, consumerTag, autoAck, exclusive, noLocal, true, args, consumer)
+}
+
+func (c *Channel) consume(queue, consumerTag string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table, consumer Consumer) error {
 	if consumerTag == "" {
 		consumerTag = uniqueConsumerTag()
 	}
@@ -133,16 +204,12 @@ func (c *Channel) Consume(queue, consumerTag string, autoAck, exclusive, noLocal
 		}
 	}()
 
-	c.recordConsumer(&RecordedConsumer{QueueName: queue, ConsumerTag: consumerTag, AutoAck: autoAck, Exclusive: exclusive, NoWait: noWait, Args: args, Consumer: consumer})
+	c.recordConsumer(&RecordedConsumer{QueueName: queue, ConsumerTag: consumerTag, AutoAck: autoAck, Exclusive: exclusive, NoLocal: noLocal, NoWait: noWait, Args: args, Consumer: consumer})
 
 	return nil
 }
 
-func (c *Channel) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
-	return c.Channel.Publish(exchange, key, mandatory, immediate, msg)
-}
-
-func (c *Channel) CancelConsumer(consumerTag string, noWait bool) error {
+func (c *Channel) Cancel(consumerTag string, noWait bool) error {
 	c.deleteRecordedConsumer(consumerTag)
 
 	return c.Channel.Cancel(consumerTag, noWait)

@@ -37,6 +37,7 @@ type RecordedConsumer struct {
 	ConsumerTag string
 	AutoAck     bool
 	Exclusive   bool
+	NoLocal     bool
 	NoWait      bool
 	Args        amqp.Table
 	Consumer    Consumer
@@ -81,7 +82,7 @@ func (c *Channel) deleteRecordedConsumer(consumerTag string) {
 }
 
 func (c *Channel) recover() {
-	if err := c.Channel.Qos(c.recordedPrefetchCount, c.recordedPrefetchSize, c.recordedPrefetchGlobal); err != nil {
+	if err := c.Qos(c.recordedPrefetchCount, c.recordedPrefetchSize, c.recordedPrefetchGlobal); err != nil {
 		c.logger.Error("failed to set Qos", "error", err)
 	}
 
@@ -98,13 +99,13 @@ func (c *Channel) recover() {
 	}
 
 	for _, v := range c.recordedBindings {
-		if err := c.QueueBind(v.QueueName, v.RoutingKey, v.ExchangeName, false, v.Args); err != nil {
+		if err := c.QueueBind(v.QueueName, v.RoutingKey, v.ExchangeName, v.Args); err != nil {
 			c.logger.Error("failed to bind queue", "queue", v.QueueName, "exchange", v.ExchangeName, "routingKey", v.RoutingKey, "error", err)
 		}
 	}
 
 	for _, v := range c.recordedConsumers {
-		if err := c.Consume(v.QueueName, v.ConsumerTag, v.AutoAck, v.Exclusive, false, v.NoWait, v.Args, v.Consumer); err != nil {
+		if err := c.consume(v.QueueName, v.ConsumerTag, v.AutoAck, v.Exclusive, v.NoLocal, v.NoWait, v.Args, v.Consumer); err != nil {
 			c.logger.Error("failed to consume", "queue", v.QueueName, "consumerTag", v.ConsumerTag, "error", err)
 		}
 	}

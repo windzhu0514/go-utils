@@ -10,23 +10,24 @@ import (
 )
 
 type Connection struct {
-	url    string
-	logger *slog.Logger
-
 	*amqp.Connection
+
+	url                 string
+	logger              *slog.Logger
+	recoveryMaxAttempts int // 0 一直重试
+	recoveryBackoff     RecoveryBackoff
+
 	close           chan struct{}
-	closed          int32
 	chanNotifyClose chan *amqp.Error
-	recoveryDelay   time.Duration
-
-	mux      sync.Mutex
-	channels []*Channel
+	mux             sync.Mutex
+	channels        []*Channel
 }
 
-func (c *Connection) SetLogger(logger *slog.Logger) {
-	c.logger = logger
-}
-
+// Channel 创建一个新的Channel
+// 一个Connection可以创建多个Channel
+// Channel是一个轻量级的Connection，可以用来发送和接收消息
+// 不建议在多个goroutine中共享一个Channel
+// https://www.rabbitmq.com/docs/channels#basics
 func (c *Connection) Channel() (*Channel, error) {
 	channel, err := c.Connection.Channel()
 	if err != nil {
@@ -52,13 +53,14 @@ func (c *Connection) Channel() (*Channel, error) {
 	ch.recordedQueues = make(map[string]*RecordedQueue)
 	ch.recordedConsumers = make(map[string]*RecordedConsumer)
 
+	c.mux.Lock()
 	c.channels = append(c.channels, ch)
+	c.mux.Unlock()
 
 	return ch, nil
 }
 
 func (c *Connection) Close() error {
-	// atomic.StoreInt32(&c.closed, 1)
 	close(c.close)
 	if err := c.Connection.Close(); err != nil {
 		return err
@@ -75,29 +77,40 @@ func (c *Connection) IsClosed() bool {
 	return c.Connection.IsClosed()
 }
 
-// TODO:
 // 重试次数 -1 无限重试 0 不重试 默认为-1
 // 重试间隔策略 默认为指数退避策略 也可以自定义
 func (c *Connection) handleReconnect() {
 	for {
 		select {
 		case errClose := <-c.chanNotifyClose:
-			// if c.conn.IsClosed() {
-			// 	return
-			// }
 			c.logger.Error(fmt.Sprintf("connection closed: %v", errClose))
 
+			if errClose != nil && !errClose.Recover {
+				select {
+				case <-time.After(5 * time.Second): // ReconnectWait
+				case <-c.close:
+					return
+				}
+			}
+
+			attempt := 0
 			for {
 				conn, err := amqp.Dial(c.url)
 				if err != nil {
 					c.logger.Error("reconnect failed: " + err.Error())
 
+					if c.recoveryMaxAttempts > 0 && attempt >= c.recoveryMaxAttempts {
+						c.logger.Error("recovery attempts exceed the limit")
+						return
+					}
+
 					select {
 					case <-c.close:
 						return
-					case <-time.After(5 * time.Second):
+					case <-time.After(c.recoveryBackoff.Delay(attempt)):
+						attempt++
+						continue
 					}
-					continue
 				}
 
 				c.Connection = conn
