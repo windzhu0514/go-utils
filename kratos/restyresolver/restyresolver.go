@@ -1,3 +1,4 @@
+// 基于 kratos 服务发现的 resty 中间件
 package restyresolver
 
 import (

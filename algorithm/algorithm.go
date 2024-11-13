@@ -3,7 +3,7 @@ package algorithm
 import "strings"
 
 // ld compares two strings and returns the levenshtein distance between them.
-func ld(s, t string, ignoreCase bool) int {
+func LD(s, t string, ignoreCase bool) int {
 	if ignoreCase {
 		s = strings.ToLower(s)
 		t = strings.ToLower(t)

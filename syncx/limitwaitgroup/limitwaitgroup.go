@@ -4,27 +4,27 @@ import (
 	"sync"
 )
 
-type Limitwaitgroup struct {
+type LimitWaitGroup struct {
 	sem chan struct{}
 	wg  sync.WaitGroup
 }
 
-func New(n int) *Limitwaitgroup {
-	return &Limitwaitgroup{
+func New(n int) *LimitWaitGroup {
+	return &LimitWaitGroup{
 		sem: make(chan struct{}, n),
 	}
 }
 
-func (l *Limitwaitgroup) Add() {
+func (l *LimitWaitGroup) Add() {
 	l.sem <- struct{}{}
 	l.wg.Add(1)
 }
 
-func (l *Limitwaitgroup) Done() {
+func (l *LimitWaitGroup) Done() {
 	<-l.sem
 	l.wg.Done()
 }
 
-func (l *Limitwaitgroup) Wait() {
+func (l *LimitWaitGroup) Wait() {
 	l.wg.Wait()
 }

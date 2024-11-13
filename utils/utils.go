@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net"
 	"reflect"
 	"runtime"
@@ -61,20 +60,6 @@ func Interface2Float64(v interface{}) (fv float64, err error) {
 	default:
 		return fv, errors.New("格式不正确")
 	}
-}
-
-// 从source里随机字符生成出长度为n的字符串
-func RandStringN(n int, source string) (str string) {
-	len := len(source)
-	if len == 0 {
-		return
-	}
-
-	for i := 0; i < n; i++ {
-		str += string(source[rand.Intn(len)])
-	}
-
-	return
 }
 
 // 字符串和byte互转 无copy 无垃圾回收
@@ -143,29 +128,6 @@ func Base64WrapRFC2045(src []byte) (m string) {
 	m1 = append(m1, new_m[ii*base64MaxLenRFC2045:the_len]...)
 	m = string(m1)
 	return m
-}
-
-// GenFakeMobile 生成假手机号
-func GenFakeMobile() string {
-	MobileNOPrefix := [...]string{"187", "156", "189", "186", "137", "139", "135", "157", "188", "153", "183", "131", "177"}
-	rand.Seed(time.Now().UnixNano())
-	mobile := MobileNOPrefix[rand.Int()%len(MobileNOPrefix)]
-	mobile = mobile + fmt.Sprintf("%08d", rand.Int63n(99999999))
-
-	return mobile
-}
-
-// GenFakeEmail 生成假的email地址
-func GenFakeEmail(prefix string) string {
-	if prefix == "" {
-		prefix = GenFakeMobile()
-	}
-
-	mailDomains := []string{"163.com", "126.com", "sina.com.cn", "139.com", "yeah.net", "21cn.com", "sohu.com", "qq.com"}
-
-	index := rand.Intn(len(mailDomains))
-
-	return prefix + "@" + mailDomains[index]
 }
 
 func LocalIP() string {
@@ -267,6 +229,8 @@ func IP4toUint32(ipAddr string) uint32 {
 	return binary.BigEndian.Uint32(ip)
 }
 
+// CompareHideString 比较strref 和strcheck  strcheck为星号字符串 支持中文
+// 350204199806138023 -> 3502************23 令狐冲 -> 令*冲
 func CompareHideString(first, second, hide string) bool {
 	if first == "" && second == "" {
 		return true
@@ -296,33 +260,4 @@ func CompareHideString(first, second, hide string) bool {
 	}
 
 	return true
-}
-
-func SQLXFields(values interface{}) []string {
-	v := reflect.ValueOf(values)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-
-	var fields []string
-	if v.Kind() == reflect.Struct {
-		for i := 0; i < v.NumField(); i++ {
-			f := v.Type().Field(i)
-			_ = f
-			field := v.Type().Field(i).Tag.Get("db")
-			if field != "" {
-				fields = append(fields, field)
-			}
-		}
-		return fields
-	}
-
-	if v.Kind() == reflect.Map {
-		for _, keyv := range v.MapKeys() {
-			fields = append(fields, keyv.String())
-		}
-		return fields
-	}
-
-	return nil
 }

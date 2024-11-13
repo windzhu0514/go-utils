@@ -69,7 +69,7 @@ func NewTripleDES(key []byte, opts ...Option) Cipher {
 	if c.BlockMode == nil {
 		c.BlockMode = CBC
 	}
-
+ 
 	return c
 }
 
