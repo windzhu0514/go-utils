@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path"
 	"testing"
-	"time"
 )
 
 func TestEqualFloat64(t *testing.T) {
@@ -75,12 +74,4 @@ func TestPathJoin(t *testing.T) {
 			t.Errorf("PathJoin(%v) = %v, want %v", tc.paths, got, tc.want)
 		}
 	}
-}
-
-func TestElapsed(t *testing.T) {
-	defer Elapsed(func(funcName string, elapsed time.Duration) {
-		fmt.Println(funcName, elapsed)
-	})()
-
-	time.Sleep(time.Second * 5)
 }

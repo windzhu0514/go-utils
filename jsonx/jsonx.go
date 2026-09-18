@@ -1,8 +1,6 @@
-package utils
+package jsonx
 
-import (
-	"encoding/json"
-)
+import "encoding/json"
 
 func JsonMarshalByte(v interface{}) []byte {
 	data, err := json.Marshal(v)

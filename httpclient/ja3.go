@@ -79,7 +79,6 @@ func (transpoort *Transport) getSupportedPoints(clientHello *tls.ClientHelloSpec
 			for _, point := range ext.SupportedPoints {
 				res = append(res, uint16(point))
 			}
-
 		}
 	}
 	return &res
@@ -95,7 +94,6 @@ func (transpoort *Transport) getSupportGroup(clientHello *tls.ClientHelloSpec) *
 				}
 				res = append(res, uint16(curveID))
 			}
-
 		}
 	}
 	return &res

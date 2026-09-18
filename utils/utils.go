@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -260,4 +261,18 @@ func CompareHideString(first, second, hide string) bool {
 	}
 
 	return true
+}
+
+func JsonMarshalString(v any) string {
+	return string(JsonMarshalByte(v))
+}
+
+func JsonMarshalByte(v any) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		// logger.Error("utils.JsonMarshalByte:" + err.Error())
+		return nil
+	}
+
+	return data
 }

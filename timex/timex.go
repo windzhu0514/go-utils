@@ -1,4 +1,4 @@
-package utils
+package timex
 
 import (
 	"runtime"
@@ -6,7 +6,9 @@ import (
 )
 
 // 函数执行时间
-// defer Elapsed()()
+// 用法：
+//
+//	defer Elapsed()()
 func Elapsed(f func(funcName string, elapsed time.Duration)) func() {
 	start := time.Now()
 	return func() {

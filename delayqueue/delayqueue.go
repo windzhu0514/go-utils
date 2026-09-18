@@ -1,4 +1,4 @@
-// 基于rabbitmq的重试
+// package delayqueue 实现了基于 rabbitmq 的延迟消息发送和处理
 package delayqueue
 
 import (
@@ -16,13 +16,16 @@ import (
 	"github.com/windzhu0514/go-utils/utils"
 )
 
+// DelayMessage 延迟消息体
 type DelayMessage struct {
 	Body        []byte                 `json:"body"`        // 消息载体
 	TotalTimes  int                    `json:"totalTimes"`  // 总重试次数
-	ContentType string                 `json:"contentType"` // 可为空
+	ContentType string                 `json:"contentType"` // body 的 MIME类型，可为空
+	BackOffName string                 `json:"backOffName"` // 重试策略名称
 	Metadata    map[string]interface{} `json:"metadata"`    // 附加信息
 }
 
+// Message 包内部使用的延迟消息体
 type Message struct {
 	*DelayMessage
 	Times         int       `json:"times"`         // 当前重试次数
@@ -31,40 +34,48 @@ type Message struct {
 	TraceID       string    `json:"traceID"`       // 每次请求的TraceID
 }
 
+// DelayQueue 实现了延迟消息发送和处理
 type DelayQueue struct {
-	log          *log.Helper
+	opt *Option
+
+	logger       log.Logger
 	amqpUrl      string
-	opt          *Option
 	exchangeName string
 	queueName    string
-	handler      func(msg *Message) error // 返回nil，不再进行重试
+	handler      func(msg Message) error // 返回nil，不再进行重试
+	backoffs     map[string]backoff.Policy
 
 	amqpConn        *amqp.Connection
 	amqpChannel     *amqp.Channel
-	notifyConnClose chan *amqp.Error
-	notifyChanClose chan *amqp.Error
-	quitChan        chan struct{}
+	notifyConnClose chan *amqp.Error // rabbitMQ 连接关闭通知
+	notifyChanClose chan *amqp.Error // rabbitMQ channel 关闭通知
+	quitChan        chan struct{}    // 退出信号
 }
 
+// Option 配置选项
 type Option struct {
 	Concurrent  int            // 并发数量 默认为1
-	BackOff     backoff.Policy // 默认 noPolicy
+	BackOff     backoff.Policy // Deprecated: 使用 RegisterBackOff 注册重试策略
 	ConsumerTag string         // 消费者标识
 }
 
 const (
-	reconnectDelay = 5 * time.Second
-	reInitDelay    = 2 * time.Second
+	reconnectDelay = 5 * time.Second // 重连间隔
+	reInitDelay    = 2 * time.Second // 重新初始化间隔
 )
 
-func New(logger log.Logger, amqpUrl string, exchangeName, queueName string, opt *Option, handler func(msg *Message) error) (*DelayQueue, error) {
+// New 创建一个 DelayQueue 实例
+// opt 默认为 1 个goroutine，消息不进行延迟
+// handler 消息处理函数，不能为空
+func New(logger log.Logger, amqpUrl string, exchangeName, queueName string, opt *Option, handler func(msg Message) error) (*DelayQueue, error) {
 	r := &DelayQueue{
-		log:          log.NewHelper(log.With(logger, "module", "retry")),
+		logger:       log.With(logger, "module", "retry", "exchangeName", exchangeName, "queueName", queueName),
 		amqpUrl:      amqpUrl,
 		exchangeName: exchangeName,
 		queueName:    queueName,
 		opt:          opt,
 		handler:      handler,
+		backoffs:     make(map[string]backoff.Policy),
 	}
 
 	if r.handler == nil {
@@ -94,26 +105,53 @@ func New(logger log.Logger, amqpUrl string, exchangeName, queueName string, opt 
 	return r, nil
 }
 
+// Shutdown 退出自动重状态
 func (r *DelayQueue) Shutdown() {
 	r.quitChan <- struct{}{}
 }
 
+func (r *DelayQueue) RegisterBackoff(name string, backoff backoff.Policy) {
+	if name == "" {
+		panic("name is empty")
+	}
+
+	if backoff == nil {
+		panic("backOff is nil")
+	}
+
+	if _, ok := r.backoffs[name]; ok {
+		panic("backOff already registered: " + name)
+	}
+
+	r.backoffs[name] = backoff
+}
+
+// Publish 发布一个延迟消息
+// TotalTimes 等于 0 时，会一直进行重试，直到处理成功
 func (r *DelayQueue) Publish(delayMsg *DelayMessage) error {
 	msg := &Message{DelayMessage: delayMsg}
 	msg.Times = 1
 	msg.CreateAt = time.Now()
 	msg.LastPublishAt = msg.CreateAt
 	msg.TraceID = uuid.NewV4().String()
+	if msg.TotalTimes < 0 {
+		msg.TotalTimes = 0
+	}
 
 	return r.publish(msg)
 }
 
 func (r *DelayQueue) publish(msg *Message) error {
-	r.log.Debugw(log.DefaultMessageKey, "publish msg", "jsonContent", utils.JsonMarshalString(msg))
-	defer r.log.Debugw(log.DefaultMessageKey, "publish msg end", "jsonContent", utils.JsonMarshalString(msg))
+	lh := log.NewHelper(log.With(r.logger, "jsonContent", utils.JsonMarshalString(msg)))
+	lh.Debug("publish msg")
+	defer lh.Debug("publish msg end")
 
 	headers := make(amqp.Table)
-	delay := r.opt.BackOff.BackOff(msg.Times).Milliseconds()
+	backOff := r.backoffs[msg.BackOffName]
+	if backOff == nil {
+		backOff = r.opt.BackOff
+	}
+	delay := backOff.BackOff(msg.Times).Milliseconds()
 	if delay != 0 {
 		headers["x-delay"] = delay
 	}
@@ -163,12 +201,10 @@ func (r *DelayQueue) init() (err error) {
 	r.notifyChanClose = make(chan *amqp.Error)
 	r.amqpChannel.NotifyClose(r.notifyChanClose)
 
-	err = r.amqpChannel.Qos(1, 0, false)
+	err = r.amqpChannel.Qos(r.opt.Concurrent, 0, false)
 	if err != nil {
 		return err
 	}
-
-	r.log.Debug("declare exchange and queue")
 
 	args := make(amqp.Table)
 	args["x-delayed-type"] = "direct"
@@ -176,14 +212,11 @@ func (r *DelayQueue) init() (err error) {
 	if err != nil {
 		return fmt.Errorf("ExchangeDeclare:%s err: %s", r.exchangeName, err.Error())
 	}
-	r.log.Debug("declare exchange success")
 
 	_, err = r.amqpChannel.QueueDeclare(r.queueName, true, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("QueueDeclare:%s err: %s", r.queueName, err.Error())
 	}
-
-	r.log.Debug("declare queue success")
 
 	err = r.amqpChannel.QueueBind(r.queueName, "", r.exchangeName, false, nil)
 	if err != nil {
@@ -209,14 +242,15 @@ func (r *DelayQueue) init() (err error) {
 }
 
 func (r *DelayQueue) handleReconnect() {
+	lh := log.NewHelper(r.logger)
 	for {
 		select {
 		case amqpErr := <-r.notifyConnClose:
-			r.log.Errorf("rabbitMQ connection notify: %v", amqpErr)
+			lh.Errorf("rabbitMQ connection notify: %v", amqpErr)
 			if err := r.connect(); err != nil {
 				select {
 				case <-r.quitChan:
-					r.log.Info("rabbitMQ has been shut down")
+					lh.Info("rabbitMQ has been shut down")
 					return
 				case <-time.After(reconnectDelay):
 				}
@@ -224,11 +258,11 @@ func (r *DelayQueue) handleReconnect() {
 			}
 
 		case amqpErr := <-r.notifyChanClose:
-			r.log.Errorf("rabbitMQ channel notify: %v", amqpErr)
+			lh.Errorf("rabbitMQ channel notify: %v", amqpErr)
 			if err := r.init(); err != nil {
 				select {
 				case <-r.quitChan:
-					r.log.Info("rabbitMQ has been shut down")
+					lh.Info("rabbitMQ has been shut down")
 					return
 				case <-time.After(reInitDelay):
 				}
@@ -238,14 +272,15 @@ func (r *DelayQueue) handleReconnect() {
 		case <-r.quitChan:
 			r.amqpConn.Close()
 			r.amqpChannel.Close()
-			r.log.Info("rabbitMQ has been shut down")
+			lh.Info("rabbitMQ has been shut down")
 			return
 		}
 	}
 }
 
 func (r *DelayQueue) consume(chMsgs <-chan amqp.Delivery) {
-	r.log.Debug("begin consume mq messages")
+	lh := log.NewHelper(r.logger)
+	lh.Debug("begin consume mq messages")
 
 	limit := make(chan struct{}, r.opt.Concurrent)
 	for d := range chMsgs {
@@ -258,14 +293,13 @@ func (r *DelayQueue) consume(chMsgs <-chan amqp.Delivery) {
 					n := runtime.Stack(buf, false)
 					buf = buf[:n]
 
-					r.log.Errorf("mqConsume panic: %v\n%s", err, buf)
+					lh.Errorf("mqConsume panic: %v\n%s", err, buf)
 				}
 			}()
 
-			r.log.Debugf("Received a message: %s", string(d.Body))
 			r.do(d)
 			if err := d.Ack(false); err != nil {
-				r.log.Errorf("consume Ack error: %s", err.Error())
+				lh.Errorf("consume Ack error: %s", err.Error())
 			}
 
 			<-limit
@@ -274,32 +308,34 @@ func (r *DelayQueue) consume(chMsgs <-chan amqp.Delivery) {
 }
 
 func (r *DelayQueue) do(msg amqp.Delivery) {
+	lh := log.NewHelper(r.logger)
+
 	var retryMsg Message
 	if err := json.Unmarshal(msg.Body, &retryMsg); err != nil {
-		r.log.Errorw("error", err.Error(), "jsonContent", string(msg.Body))
+		lh.Errorw("jsonContent", string(msg.Body), log.DefaultMessageKey, "unmarshal msg: "+err.Error())
 		return
 	}
 
-	if err := r.handler(&retryMsg); err != nil {
-		r.log.Debugw("traceId", retryMsg.TraceID, "retryTimes", retryMsg.Times, "retryTotalTimes", retryMsg.TotalTimes,
-			"retryMsg", utils.JsonMarshalString(retryMsg), log.DefaultMessageKey, "重试消息处理失败")
+	lh = log.NewHelper(log.With(r.logger, "traceId", retryMsg.TraceID, "times", retryMsg.Times, "totalTimes", retryMsg.TotalTimes))
+	lh.Debugw("jsonContent", string(msg.Body), log.DefaultMessageKey, "处理重试消息")
 
-		if retryMsg.TotalTimes > 0 && retryMsg.Times < retryMsg.TotalTimes {
+	if err := r.handler(retryMsg); err != nil {
+		lh.Debug("重试消息处理失败: " + err.Error())
+
+		if retryMsg.TotalTimes == 0 || retryMsg.Times < retryMsg.TotalTimes {
 			// 重新入队
 			retryMsg.LastPublishAt = time.Now()
 			retryMsg.Times++
 			if err := r.publish(&retryMsg); err != nil {
-				r.log.Error("publish: " + err.Error())
+				lh.Error("publish: " + err.Error())
 			}
 			return
 		}
 
-		r.log.Debugw("traceId", retryMsg.TraceID, "retryTimes", retryMsg.Times, "retryTotalTimes", retryMsg.TotalTimes,
-			"retryMsg", utils.JsonMarshalString(retryMsg), log.DefaultMessageKey, "总重试次数为0或达到最大重试次数，结束重试")
+		lh.Debug("达到最大重试次数，结束重试")
 
 		return
 	}
 
-	r.log.Debugw("traceId", retryMsg.TraceID, "retryTimes", retryMsg.Times, "retryTotalTimes", retryMsg.TotalTimes,
-		"retryMsg", utils.JsonMarshalString(retryMsg), log.DefaultMessageKey, "重试处理成功，结束重试")
+	lh.Debug("重试处理成功，结束重试")
 }
